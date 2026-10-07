@@ -98,4 +98,4 @@ Exports by entry point:
 
 ## License
 
-`package.json` declares MIT, but the repository does not contain a LICENSE file yet.
+MIT. See [LICENSE](LICENSE).
