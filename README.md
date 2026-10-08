@@ -1,22 +1,22 @@
 # @mrsarac/auth
 
-Unified authentication package for NeuraByte Labs projects.
+A small TypeScript package for Logto-based auth: JWT verification against Logto's JWKS, Express middleware, React hooks and a guest mode.
 
-## Features
+[![package.json version](https://img.shields.io/github/package-json/v/neurabytelabs/auth)](package.json)
 
-- JWT verification with Logto JWKS
-- Express middleware (auth + guest mode)
-- React hooks (useAuth, useGuestMode)
-- User sync utilities
-- TypeScript support
+## Why
 
-## Installation
+It collects the Logto setup that small apps tend to repeat: verify access tokens on an Express API, read the signed-in user in React, and let visitors try a few actions as a guest before signing in.
+
+## Quick start
+
+The package is not on the npm registry. The built `dist/` folder is committed, so you can install it straight from GitHub:
 
 ```bash
-npm install @mrsarac/auth
+npm install github:neurabytelabs/auth
 ```
 
-## Quick Start
+It installs under the name `@mrsarac/auth`. `@logto/react` (>= 3) and `react` (>= 18) are optional peer dependencies, needed only for the React exports.
 
 ### Backend (Express)
 
@@ -24,12 +24,15 @@ npm install @mrsarac/auth
 import { createAuthMiddleware } from '@mrsarac/auth/middleware';
 
 const auth = createAuthMiddleware({
-  endpoint: 'https://auth.neurabytelabs.com',
-  audience: 'your-app-id'
+  endpoint: 'https://your-tenant.logto.app', // your Logto endpoint, without /oidc
+  audience: 'your-api-resource',             // a string, or an array to accept several audiences
 });
 
 app.use('/api/protected', auth);
+// handlers then read req.user (id, email, name, picture) and req.tokenPayload
 ```
+
+`createAuthMiddleware` also takes an optional `getDbUserId(logtoId)` callback that sets `req.user.dbUserId`.
 
 ### Frontend (React)
 
@@ -48,42 +51,51 @@ function App() {
 }
 
 function MyComponent() {
-  const { isAuthenticated, user, login, logout } = useAuth();
+  const { isAuthenticated, user, login, logout, getAccessToken } = useAuth();
   // ...
 }
 ```
 
----
+### Development
 
-## Dogfooding Policy
+```bash
+npm ci
+npm run build       # tsup -> dist/ (CJS + ESM + type declarations)
+npm run test:run    # vitest
+npm run typecheck   # tsc --noEmit
+```
 
-> **"We eat our own cooking"** - NeuraByte Labs
+## How it works
 
-This package actively uses NeuraByte Labs internal tools:
+```mermaid
+flowchart LR
+  Client[React app<br/>AuthProvider / useAuth] -->|Bearer access token| MW[createAuthMiddleware]
+  MW -->|jwtVerify via jose| JWKS[Logto endpoint/oidc/jwks]
+  MW -->|req.user| Handler[your route]
+```
 
-| Tool | Usage | Status |
-|------|-------|--------|
-| **Spinoza** | Developer experience sentiment tracking | Planned |
-| **SUBSTANCE** | Release date predictions, feature prioritization | Planned |
-| **@mrsarac/auth** | Self-testing (this package authenticates itself) | Active |
+Exports by entry point:
 
-### Internal Feedback Loop
+| Entry | Exports |
+|---|---|
+| `@mrsarac/auth` | `verifyToken`, `verifyTokenMultiAudience`, `createJWKS`, `createLogtoConfig`, `syncUser`, `getUserByLogtoId`, `authLogger`, the middleware below, constants and types |
+| `@mrsarac/auth/middleware` | `createAuthMiddleware`, `authMiddleware`, `optionalAuthMiddleware`, `createGuestMiddleware`, `getGuestSession`, `isGuestMode` |
+| `@mrsarac/auth/react` | `AuthProvider`, `useAuth`, `AuthContext`, `GuestModeProvider`, `useGuestMode` |
 
-- [x] Self-testing active (dogfooding own auth)
-- [ ] Spinoza DX sentiment tracking
-- [ ] SUBSTANCE milestone predictions
+- **Token verification** uses `jose` with a remote JWKS at `<endpoint>/oidc/jwks`, cached per endpoint, with a 60-second clock tolerance by default.
+- **Guest mode.** `GuestModeProvider` keeps a guest session in `localStorage` and counts actions against a limit (default 3 actions, 24-hour expiry). `createGuestMiddleware` reads a session ID from the `x-guest-session` header and keeps sessions in memory.
+- **User sync.** `syncUser` and `getUserByLogtoId` take your own `query(sql, params)` function and expect a `users` table with `id`, `logto_id`, `email`, `name` and `updated_at` columns (PostgreSQL placeholders).
+- **Logging.** `authLogger` prints warnings and errors by default; set `AUTH_LOG_LEVEL` (Node) or `window.__AUTH_LOG_LEVEL__` (browser) to `debug`, `info`, `warn`, `error` or `silent`.
 
-### Why We Dogfood
+## Status / limits
 
-1. **Quality**: We catch bugs before users do
-2. **Credibility**: "We use it ourselves"
-3. **Insight**: Internal use = better product
-4. **Speed**: Faster feedback loop
-
-> Standard: [README_DOGFOODING_STANDARD.md](https://github.com/mrsarac/mustafasarac-core/blob/main/docs/standards/README_DOGFOODING_STANDARD.md)
-
----
+- Early version (0.1.0), no releases. Not published to any registry.
+- On the current `main`, 4 of 93 tests fail and `npm run typecheck` reports 5 errors (all in test files), so CI is red. The build passes and the committed `dist/` matches it.
+- The prebuilt `authMiddleware` and `optionalAuthMiddleware` read `LOGTO_ENDPOINT` and `API_RESOURCE` (or `LOGTO_APP_ID`) from the environment and fall back to the author's own Logto instance. Prefer `createAuthMiddleware` with an explicit endpoint; `createLogtoConfig` has the same fallback.
+- `optionalAuthMiddleware` is currently identical to `authMiddleware`: it still rejects requests without a token.
+- Guest sessions in `createGuestMiddleware` live in an in-process `Map`: they are lost on restart, not shared between instances, and the middleware does not count actions itself.
+- `QuotaInfo` is only a type; there is no quota logic yet.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
